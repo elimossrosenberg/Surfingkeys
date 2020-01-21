@@ -1,3 +1,7 @@
+function isInUIFrame() {
+    return document.location.href.indexOf(chrome.extension.getURL("")) === 0;
+}
+
 function timeStampString(t) {
     var dt = new Date();
     dt.setTime(t);
@@ -102,6 +106,7 @@ function isEditable(element) {
         && !element.disabled && (element.localName === 'textarea'
         || element.localName === 'select'
         || element.isContentEditable
+        || element.matches(runtime.conf.editableSelector)
         || (element.localName === 'input' && /^(?!button|checkbox|file|hidden|image|radio|reset|submit)/i.test(element.type)));
 }
 
@@ -209,16 +214,25 @@ function filterAncestors(elements) {
     return tmp;
 }
 
+function getRealRect(elm) {
+    if (elm.childElementCount === 0) {
+        var r = elm.getClientRects();
+        return (r.length === 3) ? r[1] : elm.getBoundingClientRect();
+    } else {
+        return elm.getBoundingClientRect();
+    }
+}
+
 function filterOverlapElements(elements) {
     // filter out tiny elements
     elements = elements.filter(function(e) {
-        var be = e.getClientRects()[0];
+        var be = getRealRect(e);
         if (e.disabled || e.readOnly || !isElementDrawn(e, be)) {
             return false;
         } else if (e.matches("input, textarea, select, form") || e.contentEditable === "true") {
             return true;
         } else {
-            var el = document.elementFromPoint(be.left + be.width / 2, be.top + 3);
+            var el = document.elementFromPoint(be.left + 3, be.top + 3);
             return !el || el.shadowRoot && el.childElementCount === 0 || el.contains(e) || e.contains(el);
         }
     });
@@ -351,14 +365,14 @@ function _map(mode, nks, oks) {
         // meta.word need to be new
         var meta = Object.assign({}, old_map.meta);
         mode.mappings.add(nks, meta);
-        if (!Front.isProvider()) {
+        if (!isInUIFrame()) {
             Front.addMapkey(mode.name, nks, oks);
         }
     }
     return old_map;
 }
 
-function RUNTIME(action, args) {
+function RUNTIME(action, args, callback) {
     var actionsRepeatBackground = ['closeTab', 'nextTab', 'previousTab', 'moveTab', 'reloadTab', 'setZoom', 'closeTabLeft','closeTabRight', 'focusTabByIndex'];
     (args = args || {}).action = action;
     if (actionsRepeatBackground.indexOf(action) !== -1) {
@@ -368,7 +382,8 @@ function RUNTIME(action, args) {
         RUNTIME.repeats = 1;
     }
     try {
-        chrome.runtime.sendMessage(args);
+        args.needResponse = callback !== undefined;
+        chrome.runtime.sendMessage(args, callback);
     } catch (e) {
         Front.showPopup('[runtime exception] ' + e);
     }
@@ -474,6 +489,10 @@ function hasScroll(el, direction, barSize) {
         var originOffset = el[offset[0]];
         el[offset[0]] = el.getBoundingClientRect()[offset[1]];
         result = el[offset[0]];
+        if (result !== originOffset) {
+            // this is valid for some site such as http://mail.live.com/
+            Mode.suppressNextScrollEvent();
+        }
         el[offset[0]] = originOffset;
     }
     return result >= barSize;
